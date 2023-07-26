@@ -1,7 +1,8 @@
 ﻿using ChessChallenge.API;
+using Microsoft.CodeAnalysis.CSharp.Syntax;
 using System;
 using System.Collections.Generic;
-using System.ComponentModel.Design;
+using System.Diagnostics;
 using System.Linq;
 
 // MyBot2-4
@@ -43,7 +44,7 @@ public class MyBot : IChessBot
 
     int Minimax(Board board, int depth, int alpha, int beta, bool capturesOnly, Move prevBest, Timer timer)
     {
-        if (board.IsInCheckmate()) return -100000 - depth;
+        if (board.IsInCheckmate()) return -100000 * depth;
         if (board.IsDraw()) return 0;
         if (depth == 0) return Minimax(board, int.MaxValue, alpha, beta, true, prevBest, timer);
         if (capturesOnly)
@@ -77,8 +78,8 @@ public class MyBot : IChessBot
     }
     Move[] Order(Board board, Move[] moves, Move prevBest)
     {
-        return moves.OrderByDescending(move => Help(move, prevBest)).ToArray();
-        /* Dictionary<Move, int> moveScores = new();
+        //return moves.OrderByDescending(move => Convert.ToInt32(move.IsPromotion) + move.CapturePieceType - move.MovePieceType).ToArray();
+        Dictionary<Move, int> moveScores = new();
         foreach (Move move in moves)
         {
             board.MakeMove(move);
@@ -86,12 +87,7 @@ public class MyBot : IChessBot
             board.UndoMove(move);
         }
         if (!prevBest.Equals(Move.NullMove)) moveScores[prevBest] = int.MaxValue;
-        return moves.OrderByDescending(move => moveScores[move]).ToArray(); */
-    }
-    int Help(Move move, Move prevBest)
-    {
-        if (move.Equals(prevBest)) return int.MaxValue;
-        return Convert.ToInt32(move.IsPromotion) + move.CapturePieceType - move.MovePieceType;
+        return moves.OrderByDescending(move => moveScores[move]).ToArray();
     }
     readonly int[] pawns = new int[]
     {

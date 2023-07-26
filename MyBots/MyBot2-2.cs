@@ -1,73 +1,62 @@
 ﻿using ChessChallenge.API;
 using System;
+using System.Numerics;
 using System.Collections.Generic;
-using System.ComponentModel.Design;
 using System.Linq;
+using ChessChallenge.Application;
 
-// MyBot2-4
 public class MyBot : IChessBot
 {
-    int positions;
-    int searchTime = 500;  // ms
-    readonly Dictionary<ulong, int> evaluationTable = new();
+    readonly int searchDepth = 10;
     public Move Think(Board board, Timer timer)
     {
+        //Console.WriteLine("New turn");
         Move[] moves = board.GetLegalMoves();
         Move MoveToPlay = Move.NullMove;
-        Move prevBest = Move.NullMove;
-        positions = 0;
 
-        for (int depth = 1; depth <= int.MaxValue; depth++)
+        for (int depth = 1; depth <= searchDepth; depth++)
         {
-            if (timer.MillisecondsElapsedThisTurn > searchTime)
+            if (100 < timer.MillisecondsElapsedThisTurn) // on 100 ms depth 3-4 is reached, on exception depth 5 is reached
             {
-                Console.WriteLine($"MyBot: Depth {depth - 1} reached with {positions} positions in {timer.MillisecondsElapsedThisTurn}ms");
+                Console.WriteLine($"MyBot depth reached: {depth - 1}");
                 break;
-            };
+            }
             int BestEvalIter = -int.MaxValue;
-            foreach (Move move in Order(board, moves, prevBest))
+            Move MoveToPlayIter = Move.NullMove;
+            foreach (Move move in moves)
             {
                 board.MakeMove(move);
-                int eval = -Minimax(board, depth - 1, -int.MaxValue, -BestEvalIter, false, prevBest, timer);
+                int eval = -Minimax(board, depth - 1, -int.MaxValue, int.MaxValue, false);
+                //Console.WriteLine($"First {move} {eval}");
                 board.UndoMove(move);
                 if (eval > BestEvalIter)
                 {
                     BestEvalIter = eval;
-                    MoveToPlay = move;
+                    MoveToPlayIter = move;
                 }
             }
-            prevBest = MoveToPlay;
+            MoveToPlay = MoveToPlayIter;
         }
+
         return MoveToPlay;
     }
 
-    int Minimax(Board board, int depth, int alpha, int beta, bool capturesOnly, Move prevBest, Timer timer)
+    int Minimax(Board board, int depth, int alpha, int beta, bool capturesOnly)
     {
-        if (board.IsInCheckmate()) return -100000 - depth;
+        if (board.IsInCheckmate()) return -100000 * depth;
         if (board.IsDraw()) return 0;
-        if (depth == 0) return Minimax(board, int.MaxValue, alpha, beta, true, prevBest, timer);
+        if (depth == 0) return Minimax(board, int.MaxValue, alpha, beta, true);
         if (capturesOnly)
         {
-            //int eval = evaluationTable.ContainsKey(board.ZobristKey) ? evaluationTable[board.ZobristKey] : Evaluate(board);
             int eval = Evaluate(board);
             if (eval >= beta) return beta;
             if (eval > alpha) alpha = eval;
         }
 
-        foreach (Move move in Order(board, board.GetLegalMoves(capturesOnly), prevBest))
+        foreach (Move move in Order(board.GetLegalMoves(capturesOnly)))
         {
-            if (timer.MillisecondsElapsedThisTurn > searchTime)
-            {
-                return int.MaxValue;
-            }
             board.MakeMove(move);
-            int eval = -Minimax(board, depth - 1, -beta, -alpha, capturesOnly, prevBest, timer);
-            if (eval == -int.MaxValue)
-            {
-                board.UndoMove(move);
-                return int.MaxValue;
-            }
-            evaluationTable[board.ZobristKey] = eval;
+            int eval = -Minimax(board, depth - 1, -beta, -alpha, capturesOnly);
             board.UndoMove(move);
 
             if (eval >= beta) return beta;
@@ -75,23 +64,9 @@ public class MyBot : IChessBot
         }
         return alpha;
     }
-    Move[] Order(Board board, Move[] moves, Move prevBest)
+    Move[] Order(Move[] moves)
     {
-        return moves.OrderByDescending(move => Help(move, prevBest)).ToArray();
-        /* Dictionary<Move, int> moveScores = new();
-        foreach (Move move in moves)
-        {
-            board.MakeMove(move);
-            moveScores[move] = evaluationTable.GetValueOrDefault(board.ZobristKey, Convert.ToInt32(move.IsPromotion) + move.CapturePieceType - move.MovePieceType);
-            board.UndoMove(move);
-        }
-        if (!prevBest.Equals(Move.NullMove)) moveScores[prevBest] = int.MaxValue;
-        return moves.OrderByDescending(move => moveScores[move]).ToArray(); */
-    }
-    int Help(Move move, Move prevBest)
-    {
-        if (move.Equals(prevBest)) return int.MaxValue;
-        return Convert.ToInt32(move.IsPromotion) + move.CapturePieceType - move.MovePieceType;
+        return moves.OrderByDescending(move => move.CapturePieceType - move.MovePieceType).ToArray();
     }
     readonly int[] pawns = new int[]
     {
@@ -130,8 +105,6 @@ public class MyBot : IChessBot
 
     int Evaluate(Board board)
     {
-        positions++;
-
         int score = 0;
         foreach (PieceList pieceList in board.GetAllPieceLists())
         {

@@ -1,98 +1,82 @@
 ﻿using ChessChallenge.API;
 using System;
+using System.Numerics;
 using System.Collections.Generic;
-using System.ComponentModel.Design;
 using System.Linq;
+using ChessChallenge.Application;
 
-// MyBot2-4
 public class MyBot : IChessBot
 {
-    int positions;
-    int searchTime = 500;  // ms
-    readonly Dictionary<ulong, int> evaluationTable = new();
+    readonly int maxSearchDepth = 10;
     public Move Think(Board board, Timer timer)
     {
         Move[] moves = board.GetLegalMoves();
-        Move MoveToPlay = Move.NullMove;
-        Move prevBest = Move.NullMove;
-        positions = 0;
 
-        for (int depth = 1; depth <= int.MaxValue; depth++)
+        bool IAmWhite = board.IsWhiteToMove;
+        Move MoveToPlay = moves[0];
+
+        for (int searchDepth = 1; searchDepth <= maxSearchDepth; searchDepth++)
         {
-            if (timer.MillisecondsElapsedThisTurn > searchTime)
+            if (0.005 * timer.MillisecondsRemaining < timer.MillisecondsElapsedThisTurn)
             {
-                Console.WriteLine($"MyBot: Depth {depth - 1} reached with {positions} positions in {timer.MillisecondsElapsedThisTurn}ms");
+                Console.WriteLine($"MyBot depth reached: {searchDepth - 1}");
                 break;
-            };
-            int BestEvalIter = -int.MaxValue;
-            foreach (Move move in Order(board, moves, prevBest))
+            }
+            int BestEvalIter = IAmWhite ? int.MinValue : int.MaxValue;
+            Move MoveToPlayIter = moves[0];
+            foreach (Move move in moves)
             {
                 board.MakeMove(move);
-                int eval = -Minimax(board, depth - 1, -int.MaxValue, -BestEvalIter, false, prevBest, timer);
+                int eval = Minimax(board, searchDepth - 1, int.MinValue, int.MaxValue, !IAmWhite);
                 board.UndoMove(move);
-                if (eval > BestEvalIter)
+
+                if ((IAmWhite && eval > BestEvalIter) || (!IAmWhite && eval < BestEvalIter))
                 {
                     BestEvalIter = eval;
-                    MoveToPlay = move;
+                    MoveToPlayIter = move;
                 }
             }
-            prevBest = MoveToPlay;
+            MoveToPlay = MoveToPlayIter;
         }
         return MoveToPlay;
     }
 
-    int Minimax(Board board, int depth, int alpha, int beta, bool capturesOnly, Move prevBest, Timer timer)
+    int Minimax(Board board, int depth, int alpha, int beta, bool maximizingPlayer)
     {
-        if (board.IsInCheckmate()) return -100000 - depth;
+        if (board.IsInCheckmate()) return maximizingPlayer ? -100000 * depth : 100000 * depth;
         if (board.IsDraw()) return 0;
-        if (depth == 0) return Minimax(board, int.MaxValue, alpha, beta, true, prevBest, timer);
-        if (capturesOnly)
-        {
-            //int eval = evaluationTable.ContainsKey(board.ZobristKey) ? evaluationTable[board.ZobristKey] : Evaluate(board);
-            int eval = Evaluate(board);
-            if (eval >= beta) return beta;
-            if (eval > alpha) alpha = eval;
-        }
+        if (depth == 0) return Evaluate(board);
 
-        foreach (Move move in Order(board, board.GetLegalMoves(capturesOnly), prevBest))
-        {
-            if (timer.MillisecondsElapsedThisTurn > searchTime)
-            {
-                return int.MaxValue;
-            }
-            board.MakeMove(move);
-            int eval = -Minimax(board, depth - 1, -beta, -alpha, capturesOnly, prevBest, timer);
-            if (eval == -int.MaxValue)
-            {
-                board.UndoMove(move);
-                return int.MaxValue;
-            }
-            evaluationTable[board.ZobristKey] = eval;
-            board.UndoMove(move);
+        int eval, bestEval;
+        bestEval = maximizingPlayer ? int.MinValue : int.MaxValue;
 
-            if (eval >= beta) return beta;
-            if (eval > alpha) alpha = eval;
-        }
-        return alpha;
-    }
-    Move[] Order(Board board, Move[] moves, Move prevBest)
-    {
-        return moves.OrderByDescending(move => Help(move, prevBest)).ToArray();
-        /* Dictionary<Move, int> moveScores = new();
+        Move[] moves = board.GetLegalMoves();
+        moves = Order(moves);
         foreach (Move move in moves)
         {
             board.MakeMove(move);
-            moveScores[move] = evaluationTable.GetValueOrDefault(board.ZobristKey, Convert.ToInt32(move.IsPromotion) + move.CapturePieceType - move.MovePieceType);
+            eval = Minimax(board, depth - 1, alpha, beta, !maximizingPlayer);
             board.UndoMove(move);
+
+            if (maximizingPlayer)
+            {
+                bestEval = Math.Max(bestEval, eval);
+                alpha = Math.Max(alpha, eval);
+            }
+            else
+            {
+                bestEval = Math.Min(bestEval, eval);
+                beta = Math.Min(beta, eval);
+            }
+            if (beta <= alpha) break;
         }
-        if (!prevBest.Equals(Move.NullMove)) moveScores[prevBest] = int.MaxValue;
-        return moves.OrderByDescending(move => moveScores[move]).ToArray(); */
+        return bestEval;
     }
-    int Help(Move move, Move prevBest)
+    Move[] Order(Move[] moves)
     {
-        if (move.Equals(prevBest)) return int.MaxValue;
-        return Convert.ToInt32(move.IsPromotion) + move.CapturePieceType - move.MovePieceType;
+        return moves.OrderByDescending(move => move.CapturePieceType - move.MovePieceType).ToArray();
     }
+
     readonly int[] pawns = new int[]
     {
     100, 100, 100, 100, 100, 100, 100, 100,
@@ -128,17 +112,61 @@ public class MyBot : IChessBot
     280, 290, 290, 290, 290, 290, 290, 280
     };
 
+    /* readonly int[] rooks = new int[]
+    {
+     500, 500, 500, 500, 500, 500, 500, 500,
+     505, 510, 510, 510, 510, 510, 510, 505,
+     495, 500, 500, 500, 500, 500, 500, 495,
+     495, 500, 500, 500, 500, 500, 500, 495,
+     495, 500, 500, 500, 500, 500, 500, 495,
+     495, 500, 500, 500, 500, 500, 500, 495,
+     495, 500, 500, 500, 500, 500, 500, 495,
+     500, 500, 500, 505, 505, 500, 500, 500
+    }; */
+    /* readonly int[] queens = new int[]
+    {
+    880, 890, 890, 895, 895, 890, 890, 880,
+    890, 900, 900, 900, 900, 900, 900, 890,
+    890, 900, 905, 905, 905, 905, 900, 890,
+    895, 900, 905, 905, 905, 905, 900, 895,
+    900, 900, 905, 905, 905, 905, 900, 895,
+    890, 905, 905, 905, 905, 905, 900, 890,
+    890, 900, 905, 900, 900, 900, 900, 890,
+    880, 890, 890, 895, 895, 890, 890, 880
+    }; */
+    /* readonly int[] kingsEarly = new int[]
+    {
+    9970, 9960, 9960, 9950, 9950, 9960, 9960, 9970,
+    9970, 9960, 9960, 9950, 9950, 9960, 9960, 9970,
+    9970, 9960, 9960, 9950, 9950, 9960, 9960, 9970,
+    9970, 9960, 9960, 9950, 9950, 9960, 9960, 9970,
+    9980, 9970, 9970, 9960, 9960, 9970, 9970, 9980,
+    9990, 9980, 9980, 9980, 9980, 9980, 9980, 9990,
+    10020, 10020, 10000, 10000, 10000, 10000, 10020, 10020,
+    10020, 10030, 10010, 10000, 10000, 10010, 10030, 10020
+    }; */
+    /*    readonly int[] kingsLate = new int[]
+    {
+       9950, 9960, 9970, 9980, 9980, 9970, 9960, 9950,
+       9970, 9980, 9990, 10000, 10000, 9990, 9980, 9970,
+       9970, 9990, 10020, 10030, 10030, 10020, 9990, 9970,
+       9970, 9990, 10030, 10040, 10040, 10030, 9990, 9970,
+       9970, 9990, 10030, 10040, 10040, 100300, 9990, 9970,
+       9970, 9990, 10020, 10030, 10030, 10020, 9990, 9970,
+       9970, 9970, 10000, 10000, 10000, 10000, 9970, 9970,
+       9950, 9970, 9970, 9970, 9970, 9970, 9970, 9950
+    }; */
+
+
     int Evaluate(Board board)
     {
-        positions++;
-
         int score = 0;
         foreach (PieceList pieceList in board.GetAllPieceLists())
         {
+            bool isWhite = pieceList.IsWhitePieceList;
+            int sign = isWhite ? 1 : -1;
             foreach (Piece piece in pieceList)
             {
-                bool isWhite = piece.IsWhite;
-                int sign = isWhite ? 1 : -1;
                 int index = isWhite ? piece.Square.Index : 63 - piece.Square.Index;
                 switch (piece.PieceType)
                 {
@@ -191,6 +219,6 @@ public class MyBot : IChessBot
                 }
             }
         }
-        return board.IsWhiteToMove ? score : -score;
+        return score;
     }
 }
