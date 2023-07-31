@@ -5,7 +5,7 @@ using ChessChallenge.API;
 
 public class Stockfish : IChessBot
 {
-    private Process stockfishProcess;
+    readonly private Process stockfishProcess;
     private StreamWriter Ins() => stockfishProcess.StandardInput;
     private StreamReader Outs() => stockfishProcess.StandardOutput;
 

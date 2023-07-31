@@ -5,23 +5,22 @@ using System.Linq;
 
 namespace ChessChallenge.Example
 {
+    // MyBot2-6
     public class EvilBot : IChessBot
     {
-        int positions;
-        int searchTime = 500;  // ms
-        readonly Dictionary<ulong, int> evaluationTable = new();
+        int searchTime = 1000;  // ms
         public Move Think(Board board, Timer timer)
         {
+            if (timer.MillisecondsRemaining < 10_000) searchTime = 100;
             Move[] moves = board.GetLegalMoves();
             Move MoveToPlay = Move.NullMove;
             Move prevBest = Move.NullMove;
-            positions = 0;
 
             for (int depth = 1; depth <= int.MaxValue; depth++)
             {
                 if (timer.MillisecondsElapsedThisTurn > searchTime)
                 {
-                    Console.WriteLine($"EvilBot: Depth {depth - 1} reached with {positions} positions in {timer.MillisecondsElapsedThisTurn}ms");
+                    Console.WriteLine($"EvilBot: {depth - 1}");
                     break;
                 };
                 int BestEvalIter = -int.MaxValue;
@@ -43,12 +42,13 @@ namespace ChessChallenge.Example
 
         int Minimax(Board board, int depth, int alpha, int beta, bool capturesOnly, Move prevBest, Timer timer)
         {
+            if (timer.MillisecondsElapsedThisTurn > searchTime) return int.MaxValue;
+
             if (board.IsInCheckmate()) return -100000 - depth;
             if (board.IsDraw()) return 0;
             if (depth == 0) return Minimax(board, int.MaxValue, alpha, beta, true, prevBest, timer);
             if (capturesOnly)
             {
-                //int eval = evaluationTable.ContainsKey(board.ZobristKey) ? evaluationTable[board.ZobristKey] : Evaluate(board);
                 int eval = Evaluate(board);
                 if (eval >= beta) return beta;
                 if (eval > alpha) alpha = eval;
@@ -56,10 +56,8 @@ namespace ChessChallenge.Example
 
             foreach (Move move in Order(board, board.GetLegalMoves(capturesOnly), prevBest))
             {
-                if (timer.MillisecondsElapsedThisTurn > searchTime)
-                {
-                    return int.MaxValue;
-                }
+                if (timer.MillisecondsElapsedThisTurn > searchTime) return int.MaxValue;
+
                 board.MakeMove(move);
                 int eval = -Minimax(board, depth - 1, -beta, -alpha, capturesOnly, prevBest, timer);
                 if (eval == -int.MaxValue)
@@ -67,7 +65,6 @@ namespace ChessChallenge.Example
                     board.UndoMove(move);
                     return int.MaxValue;
                 }
-                evaluationTable[board.ZobristKey] = eval;
                 board.UndoMove(move);
 
                 if (eval >= beta) return beta;
@@ -77,122 +74,99 @@ namespace ChessChallenge.Example
         }
         Move[] Order(Board board, Move[] moves, Move prevBest)
         {
-
-            return moves.OrderByDescending(move => help(move, prevBest)).ToArray();
-            /* Dictionary<Move, int> moveScores = new();
-            foreach (Move move in moves)
-            {
-                board.MakeMove(move);
-                moveScores[move] = evaluationTable.GetValueOrDefault(board.ZobristKey, Convert.ToInt32(move.IsPromotion) + move.CapturePieceType - move.MovePieceType);
-                board.UndoMove(move);
-            }
-            if (!prevBest.Equals(Move.NullMove)) moveScores[prevBest] = int.MaxValue;
-            return moves.OrderByDescending(move => moveScores[move]).ToArray(); */
+            return moves.OrderByDescending(move => Help(move, prevBest)).ToArray();
         }
-        int help(Move move, Move prevBest)
+        int Help(Move move, Move prevBest)
         {
             if (move.Equals(prevBest)) return int.MaxValue;
             return Convert.ToInt32(move.IsPromotion) + move.CapturePieceType - move.MovePieceType;
         }
-        readonly int[] pawns = new int[]
+        ulong[] Compressed = new ulong[]
         {
-    100, 100, 100, 100, 100, 100, 100, 100,
-    105, 110, 110,  80,  80, 110, 110, 105,
-    105,  95,  90, 100, 100,  90,  95, 105,
-    100, 100, 100, 120, 120, 100, 100, 100,
-    105, 105, 110, 125, 125, 110, 105, 105,
-    110, 110, 120, 130, 130, 120, 110, 110,
-    150, 150, 150, 150, 150, 150, 150, 150,
-    100, 100, 100, 100, 100, 100, 100, 100
-        };
-
-        readonly int[] knights = new int[]
+14849753360064446464, 16293730985874817024, 16288101486341259264, 16285292255607128064, 16285292255607128064, 16288101486341259264, 16293730985874817024, 14849753360064446464, 16290917314144503050, 16290645752205281802, 2570, 388106, 388106, 2570, 16290645752205281802, 16290917314144503050, 16354530658881766666, 17792596228002151178, 1507585472988902922, 2228161413368446986, 2228161413368446986, 1507585472988902922, 17792596228002151178, 16354530658881766666, 16351721406672797716, 17789781478066880532, 2225346663601340436, 2943107854213846036, 2943107854213846036, 2225346663601340436, 17789781478066880532, 16351721406672797716, 16348906656905692446, 17786966728383989022, 2222531913750350366, 2940293104446740766, 2940293104446740766, 2222531913750350366, 17786966728383989022, 16348906656905692446, 16348901159347554866, 17786966728299776562, 1501955973370745906, 2219717164067135026, 2219717164067135026, 1501955973370745906, 17786966728299776562, 16348901159347554866, 16348900102784954960, 17066390830885646928, 17786966771249459792, 57983888152080976, 57983888152080976, 17786966771249459792, 17066390830885646928, 16348900102784954960, 14907737205266841600, 15625509391163719680, 16346085331543654400, 17063852019713966080, 17063852019713966080, 16346085331543654400, 15625509391163719680, 14907737205266841600};
+        private enum ScoreType { PawnLate, Pawn, Knight, Bishop, Rook, Queen, King, KingLate };
+        int GetPieceSquareValue(ScoreType type, int index)
         {
-    250, 260, 270, 270, 270, 270, 260, 250,
-    260, 280, 300, 305, 305, 300, 280, 260,
-    270, 305, 310, 315, 315, 310, 305, 270,
-    270, 300, 315, 320, 320, 315, 300, 270,
-    270, 305, 315, 320, 320, 315, 305, 270,
-    270, 300, 310, 315, 315, 310, 300, 270,
-    260, 280, 300, 300, 300, 300, 280, 260,
-    250, 260, 270, 270, 270, 270, 260, 250
-        };
-        readonly int[] bishops = new int[]
-        {
-    280, 290, 290, 290, 290, 290, 290, 280,
-    290, 305, 300, 300, 300, 300, 305, 290,
-    290, 310, 310, 310, 310, 310, 310, 290,
-    290, 300, 310, 310, 310, 310, 300, 290,
-    290, 305, 305, 310, 310, 305, 305, 290,
-    290, 300, 305, 310, 310, 305, 300, 290,
-    290, 300, 300, 300, 300, 300, 300, 290,
-    280, 290, 290, 290, 290, 290, 290, 280
-        };
+            ulong CompressedValue = Compressed[index];
+            ulong Mask = 0xFF;
+            return (int)(sbyte)((CompressedValue >> (int)type * 8) & Mask);
+        }
 
         int Evaluate(Board board)
         {
-            positions++;
+            float whiteEndgamePhaseWeight = 1 - Math.Min(1, CountMaterial(board, true, false) / 1620f); // 1620 = 2*500 + 320 + 300
+            float blackEndgamePhaseWeight = 1 - Math.Min(1, CountMaterial(board, false, false) / 1620f);
 
-            int score = 0;
-            foreach (PieceList pieceList in board.GetAllPieceLists())
+            int whiteEval = CountMaterial(board, true);
+            int blackEval = CountMaterial(board, false);
+            whiteEval += MopUpEval(board, true, whiteEval, blackEval, blackEndgamePhaseWeight);
+            blackEval += MopUpEval(board, false, blackEval, whiteEval, whiteEndgamePhaseWeight);
+
+            int eval = whiteEval - blackEval;
+
+            foreach (PieceList piecelist in board.GetAllPieceLists())
             {
-                foreach (Piece piece in pieceList)
+                int sign = -1;
+                float endgameWeight = blackEndgamePhaseWeight;
+                if (piecelist.IsWhitePieceList)
                 {
-                    bool isWhite = piece.IsWhite;
-                    int sign = isWhite ? 1 : -1;
-                    int index = isWhite ? piece.Square.Index : 63 - piece.Square.Index;
-                    switch (piece.PieceType)
-                    {
-                        case PieceType.Pawn:
-                            score += sign * pawns[index];
-                            break;
-                        case PieceType.Knight:
-                            score += sign * knights[index];
-                            break;
-                        case PieceType.Bishop:
-                            score += sign * bishops[index];
-                            break;
-                        case PieceType.Rook:
-                            score += sign * 500;
-                            int[] bestRanks = { 1, 6 };
-                            if (bestRanks.Contains(piece.Square.Rank))
-                            {
-                                score += sign * 10;
-                            }
-                            break;
-                        case PieceType.Queen:
-                            score += sign * 900;
-                            int[] border = { 0, 7 };
-                            if (border.Contains(piece.Square.Rank) || border.Contains(piece.Square.File))
-                            {
-                                score -= sign * 15;
-                            }
-                            break;
-                        case PieceType.King:
-                            score += sign * 10000;
+                    sign = 1;
+                    endgameWeight = whiteEndgamePhaseWeight;
+                }
+                foreach (Piece piece in piecelist)
+                {
+                    //int square = piece.Square.Index;
+                    int square = piecelist.IsWhitePieceList ? piece.Square.Index : 63 - piece.Square.Index;
 
-                            if (board.GetPieceList(PieceType.Queen, !isWhite).Count != 0)
-                            {
-                                // Early game
-                                // Keep king at the back
-                                int distance = isWhite ? piece.Square.Rank : 7 - piece.Square.Rank;
-                                score -= sign * 10 * distance;
-                            }
-                            else
-                            {
-                                // Late game
-                                // Move king to the center
-                                int[] edge = { 0, 1, 6, 7 };
-                                if (edge.Contains(piece.Square.Rank) || edge.Contains(piece.Square.File))
-                                {
-                                    score -= sign * 50;
-                                }
-                            }
-                            break;
-                    }
+                    eval += piece.PieceType switch
+                    {
+                        PieceType.Pawn => sign * (int)Math.Round(GetPieceSquareValue(ScoreType.Pawn, square) * (1 - endgameWeight) + GetPieceSquareValue(ScoreType.PawnLate, square) * endgameWeight),
+                        PieceType.King => sign * (int)Math.Round(GetPieceSquareValue(ScoreType.King, square) * (1 - endgameWeight) + GetPieceSquareValue(ScoreType.KingLate, square) * endgameWeight),
+                        _ => sign * GetPieceSquareValue((ScoreType)piece.PieceType, square),
+                    };
                 }
             }
-            return board.IsWhiteToMove ? score : -score;
+
+
+            return board.IsWhiteToMove ? eval : -eval;
+        }
+
+        static int CountMaterial(Board board, bool whiteMaterial, bool includePawns = true)
+        {
+            int material = 0;
+            if (includePawns) material += board.GetPieceList(PieceType.Pawn, whiteMaterial).Count * 100;
+            material += board.GetPieceList(PieceType.Knight, whiteMaterial).Count * 300;
+            material += board.GetPieceList(PieceType.Bishop, whiteMaterial).Count * 320;
+            material += board.GetPieceList(PieceType.Rook, whiteMaterial).Count * 500;
+            material += board.GetPieceList(PieceType.Queen, whiteMaterial).Count * 900;
+            return material;
+        }
+        static int MopUpEval(Board board, bool friendlyColorWhite, int myMaterial, int opponentMaterial, float endgameWeight)
+        {
+            int mopUpScore = 0;
+            if (myMaterial > opponentMaterial + 100 * 2 && endgameWeight > 0)
+            {
+                Square opponentKingSquare = board.GetKingSquare(!friendlyColorWhite);
+                mopUpScore += ManhattanCenterDistance(opponentKingSquare) * 10;
+                // use ortho dst to promote direct opposition
+                mopUpScore += (14 - ManhattanDistance(board.GetKingSquare(friendlyColorWhite), opponentKingSquare)) * 4;
+
+                return (int)(mopUpScore * endgameWeight);
+            }
+            return 0;
+        }
+        static int ManhattanCenterDistance(Square sq)
+        {
+            int file = sq.File;
+            int rank = sq.Rank;
+            file ^= (file - 4) >> 8;
+            rank ^= (rank - 4) >> 8;
+            return (file + rank) & 7;
+        }
+
+        static int ManhattanDistance(Square sq1, Square sq2)
+        {
+            return Math.Abs(sq2.Rank - sq1.Rank) + Math.Abs(sq2.File - sq1.File);
         }
     }
 }
