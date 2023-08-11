@@ -78,7 +78,7 @@ namespace ChessChallenge.Application
             }
             buttonPos = UIHelper.Scale(new Vector2(405, 210));
             buttonSize = UIHelper.Scale(new Vector2(200, 55));
-            if (NextButtonInRow("Stockfish 1000", ref buttonPos, spacing, buttonSize)) { controller.StartNewBotMatch(ChallengeController.PlayerType.MyBot, ChallengeController.PlayerType.Stockfish); }
+            if (NextButtonInRow("Stockfish", ref buttonPos, spacing, buttonSize)) { controller.StartNewBotMatch(ChallengeController.PlayerType.MyBot, ChallengeController.PlayerType.Stockfish); }
 
         }
     }

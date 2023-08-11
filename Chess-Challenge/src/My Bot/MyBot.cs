@@ -1,229 +1,225 @@
 ﻿using ChessChallenge.API;
-using ChessChallenge.Application;
 using System;
-using System.Collections.Generic;
 using System.Linq;
-using System.Reflection.Metadata;
 
-// MyBot2-8
+
+// MyBot3-4
+// punish bad pawn structures (dubbled or isolated)
 public class MyBot : IChessBot
 {
+    Move bestmoveRoot;
 
-    public enum Flag { INVALID, EXACT, LOWERBOUND, UPPERBOUND };
+    int searchTime = 2000;
 
-    //14 bytes per entry, likely will align to 16 bytes due to padding (if it aligns to 32, recalculate max TP table size)
-    public struct Transposition
+    struct TTEntry
     {
         public ulong zobristHash;
-        public int evaluation;
-        public byte depth;
-        public Flag flag;
-    };
+        public Move move;
+        public int depth, eval, flag; // 0 = exact, 1 = lower, 2 = upper
 
-    private static readonly ulong k_TpMask = 0x7FFFFF; //4.7 million entries, likely consuming about 151 MB
-    private readonly Transposition[] m_TPTable = new Transposition[k_TpMask + 1];
-
-
-    int searchTime = 1000;  // ms
-    public Move Think(Board board, Timer timer)
-    {
-        if (timer.MillisecondsRemaining < 10_000) searchTime = 100;
-        Move[] moves = board.GetLegalMoves();
-        Move MoveToPlay = Move.NullMove;
-        Move prevBest = Move.NullMove;
-
-        for (int depth = 1; depth <= int.MaxValue; depth++)
+        public TTEntry(ulong _zobristHash, Move _move, int _depth, int _eval, int _flag)
         {
-            if (timer.MillisecondsElapsedThisTurn > searchTime)
-            {
-                Console.WriteLine($"MyBot: {depth - 1}"); // 17 tokens
-                break;
-            };
-            int BestEvalIter = -int.MaxValue;
-            foreach (Move move in Order(board, moves, prevBest))
-            {
-                board.MakeMove(move);
-                int eval = -Minimax(board, depth - 1, -int.MaxValue, -BestEvalIter, false, prevBest, timer);
-                Console.WriteLine($"{depth} {move} {eval}");
-                board.UndoMove(move);
-                if (eval > BestEvalIter)
-                {
-                    BestEvalIter = eval;
-                    MoveToPlay = move;
-                }
-            }
-            prevBest = MoveToPlay;
+            zobristHash = _zobristHash;
+            move = _move;
+            depth = _depth;
+            eval = _eval;
+            flag = _flag;
         }
-        return MoveToPlay;
     }
 
-    int Minimax(Board board, int depth, int alpha, int beta, bool capturesOnly, Move prevBest, Timer timer)
+    const int ttMask = 0x3FFFFF;
+    TTEntry[] tt = new TTEntry[ttMask + 1];
+
+    // 8 bits per score
+    ulong[] compressed = { 0, 18091310594175943473, 17729576757067842301, 17656368983588406777, 17583463653133123315, 18018903212831931891, 17659471727739404271, 0, 0, 6724510076046890585, 3037988131755930159, 578714746879347728, 277063994901510, 18158511498534388482, 18230852792426431494, 0, 14625668616749503405, 17871161878745705436, 1595470717666860521, 795204270349158396, 18161338403160326650, 17873669855958662133, 17796265298118698482, 17651561836709082572, 14907181883262102755, 16569855717665930228, 17003054520181519860, 17799357172263092472, 17798797507976232183, 17651294711605886709, 16858369780686190059, 16133854247110633202, 18159334980899504626, 16791984635788068851, 18379780590394479096, 18375550773540487678, 145529233262118397, 362835568813868800, 4514607629076226, 17720813485764968176, 17579796734441879033, 17941771364025433596, 144118482315770881, 72344596705051647, 18158237733175558397, 17941497615879503610, 17508020636922738425, 17869711558145539061, 1517436131058128144, 1588962699736059917, 584929225523136766, 17725060976879008500, 17654951682867065582, 17293259623309505514, 15923889354942314474, 17504932134664534519, 145247710940300550, 73184589245711877, 18374122438830260995, 72057598333288706, 18085326896522068481, 17869150811544485886, 18373274689578466557, 17726724477624058108, 1591202357256781810, 1949526440663706868, 2024117404048750586, 18446471394691117811, 18374965751245959932, 146086603817419001, 18446470312511208431, 16641068873990010624, 721993266920884988, 4235443680840184, 290782441826943734, 1304940102892129025, 798000315483360759, 145531376283087608, 17288743890399065333, 17002759842054861296, 432608227130608352, 17432587516366946318, 17657210019487222780, 17147723797407331832, 16640776334774304744, 17508008438829218041, 289347389234086656, 507765481550516729, 17870853946314518235, 363405120148801530, 438562246038849541, 75734416974678780, 18087594154091216375, 18159366965993733879, 17869722600641526515, 16930149142397054694 };
+
+    int GetPieceSquareValue(int index)
     {
-        if (timer.MillisecondsElapsedThisTurn > searchTime) return int.MaxValue;
-
-        if (board.IsInCheckmate()) return -100000 - depth;
-        if (board.IsDraw()) return 0;
-        if (depth == 0) return Minimax(board, -1, alpha, beta, true, prevBest, timer);
-        if (capturesOnly)
-        {
-            int eval = Evaluate(board);
-            if (eval >= beta) return beta;
-            if (eval > alpha) alpha = eval;
-        }
-
-        foreach (Move move in Order(board, board.GetLegalMoves(capturesOnly), prevBest))
-        {
-            if (timer.MillisecondsElapsedThisTurn > searchTime) return int.MaxValue;
-
-            board.MakeMove(move);
-
-
-            ref Transposition tp = ref m_TPTable[board.ZobristKey & k_TpMask];
-
-            if (tp.flag != Flag.INVALID && tp.zobristHash == board.ZobristKey && tp.depth >= depth)
-            {
-
-                if (tp.flag == Flag.EXACT)
-                {
-                    Console.WriteLine($"TP: {tp.evaluation} ~ Minimax: {-Minimax(board, depth - 1, -beta, -alpha, capturesOnly, prevBest, timer)} ~ alpha: {alpha} ~ beta: {beta} ~ TP depth: {tp.depth - 1}");
-                    board.UndoMove(move);
-                    if (tp.evaluation <= alpha) return alpha;
-                    if (tp.evaluation >= beta) return beta;
-                    return tp.evaluation;
-                }
-                if (tp.flag == Flag.LOWERBOUND && tp.evaluation > alpha) alpha = tp.evaluation;
-                if (tp.flag == Flag.UPPERBOUND && tp.evaluation < beta) beta = tp.evaluation;
-                if (alpha >= beta)
-                {
-                    board.UndoMove(move);
-                    return tp.evaluation;
-                }
-            }
-            int eval = -Minimax(board, depth - 1, -beta, -alpha, capturesOnly, prevBest, timer);
-            if (eval == -int.MaxValue)
-            {
-                board.UndoMove(move);
-                return int.MaxValue;
-            }
-
-            Flag flag;
-            if (eval == alpha) flag = Flag.UPPERBOUND;
-            else if (eval == beta) flag = Flag.LOWERBOUND;
-            else flag = Flag.EXACT;
-            int evalDepth = depth;
-            if (capturesOnly) evalDepth = 0;
-            m_TPTable[board.ZobristKey & k_TpMask] = new Transposition { zobristHash = board.ZobristKey, evaluation = eval, depth = (byte)evalDepth, flag = flag };
-            board.UndoMove(move);
-
-            if (eval >= beta) return beta;
-            if (eval > alpha) alpha = eval;
-        }
-        return alpha;
+        return (sbyte)((compressed[index / 8] >> (8 * (index % 8))) & 255) * 2;
     }
-    Move[] Order(Board board, Move[] moves, Move prevBest)
+    /* ulong[] psts = { 657614902731556116, 420894446315227099, 384592972471695068, 312245244820264086, 364876803783607569, 366006824779723922, 366006826859316500, 786039115310605588, 421220596516513823, 366011295806342421,
+                         366006826859316436, 366006896669578452, 162218943720801556, 440575073001255824, 657087419459913430, 402634039558223453, 347425219986941203, 365698755348489557, 311382605788951956, 147850316371514514,
+                         329107007234708689, 402598430990222677, 402611905376114006, 329415149680141460, 257053881053295759, 291134268204721362, 492947507967247313, 367159395376767958, 384021229732455700, 384307098409076181,
+                         402035762391246293, 328847661003244824, 365712019230110867, 366002427738801364, 384307168185238804, 347996828560606484, 329692156834174227, 365439338182165780, 386018218798040211, 456959123538409047,
+                         347157285952386452, 365711880701965780, 365997890021704981, 221896035722130452, 384289231362147538, 384307167128540502, 366006826859320596, 366006826876093716, 366002360093332756, 366006824694793492,
+                         347992428333053139, 457508666683233428, 329723156783776785, 329401687190893908, 366002356855326100, 366288301819245844, 329978030930875600, 420621693221156179, 422042614449657239, 384602117564867863,
+                         419505151144195476, 366274972473194070, 329406075454444949, 275354286769374224, 366855645423297932, 329991151972070674, 311105941360174354, 256772197720318995, 365993560693875923, 258219435335676691,
+                         383730812414424149, 384601907111998612, 401758895947998613, 420612834953622999, 402607438610388375, 329978099633296596, 67159620133902 };
+    public int GetPieceSquareValue(int psq)
     {
-        return moves.OrderByDescending(move => move.Equals(prevBest) ? int.MaxValue : (Convert.ToInt32(move.IsPromotion) + move.CapturePieceType - move.MovePieceType)).ToArray();
-    }
-    readonly ulong[] Compressed = new ulong[]
-    {
-14849753360064446464, 16293730985874817024, 16288101486341259264, 16285292255607128064, 16285292255607128064, 16288101486341259264, 16293730985874817024, 14849753360064446464, 16290917314144503050, 16290645752205281802, 2570, 388106, 388106, 2570, 16290645752205281802, 16290917314144503050, 16354530658881766666, 17792596228002151178, 1507585472988902922, 2228161413368446986, 2228161413368446986, 1507585472988902922, 17792596228002151178, 16354530658881766666, 16351721406672797716, 17789781478066880532, 2225346663601340436, 2943107854213846036, 2943107854213846036, 2225346663601340436, 17789781478066880532, 16351721406672797716, 16348906656905692446, 17786966728383989022, 2222531913750350366, 2940293104446740766, 2940293104446740766, 2222531913750350366, 17786966728383989022, 16348906656905692446, 16348901159347554866, 17786966728299776562, 1501955973370745906, 2219717164067135026, 2219717164067135026, 1501955973370745906, 17786966728299776562, 16348901159347554866, 16348900102784954960, 17066390830885646928, 17786966771249459792, 57983888152080976, 57983888152080976, 17786966771249459792, 17066390830885646928, 16348900102784954960, 14907737205266841600, 15625509391163719680, 16346085331543654400, 17063852019713966080, 17063852019713966080, 16346085331543654400, 15625509391163719680, 14907737205266841600};
-    /*
-    type: 0 = pawnLate, 1 = pawnEarly, 2 = knight, 3 = bishop, 4 = rook, 5 = queen, 6 = kingEarly, 7 = kingLate
-    */
-    int GetPieceSquareValue(int type, int index)
-    {
-        ulong CompressedValue = Compressed[index];
-        ulong Mask = 0xFF;
-        return (int)(sbyte)((CompressedValue >> type * 8) & Mask);
-    }
+        return (int)(((psts[psq / 10] >> (6 * (psq % 10))) & 63) - 20) * 8;
+    } */
 
+    int[] gamephase = { 0, 0, 1, 1, 2, 4, 0 };
+    int[] pieceEval = { 0, 100, 310, 320, 500, 1000, 10_000 };
     int Evaluate(Board board)
     {
-        float whiteEndgamePhaseWeight = 1 - Math.Min(1, CountMaterial(board, true, false) / 1620f); // 1620 = 2*500 + 320 + 300
-        float blackEndgamePhaseWeight = 1 - Math.Min(1, CountMaterial(board, false, false) / 1620f);
-
-        int whiteEval = CountMaterial(board, true);
-        int blackEval = CountMaterial(board, false);
-        whiteEval += MopUpEval(board, true, whiteEval, blackEval, blackEndgamePhaseWeight);
-        blackEval += MopUpEval(board, false, blackEval, whiteEval, whiteEndgamePhaseWeight);
-
-        int eval = whiteEval - blackEval;
-
-        foreach (PieceList piecelist in board.GetAllPieceLists())
+        int mg = 0, eg = 0, phase = 0;
+        foreach (bool whitePiece in new[] { true, false })
         {
-            int sign = -1;
-            float endgameWeight = blackEndgamePhaseWeight;
-            if (piecelist.IsWhitePieceList)
+            for (int piece = 1; piece <= 6; piece++)
             {
-                sign = 1;
-                endgameWeight = whiteEndgamePhaseWeight;
-            }
-            foreach (Piece piece in piecelist)
-            {
-                //int square = piece.Square.Index;
-                int square = piecelist.IsWhitePieceList ? piece.Square.Index : 63 - piece.Square.Index;
-
-                eval += piece.PieceType switch
+                ulong bitBoard = board.GetPieceBitboard((PieceType)piece, whitePiece);
+                while (bitBoard != 0)
                 {
-                    //enum ScoreType { PawnLate, Pawn, Knight, Bishop, Rook, Queen, King, KingLate };
-                    PieceType.Pawn => sign * (int)Math.Round(GetPieceSquareValue(1, square) * (1 - endgameWeight) + GetPieceSquareValue(0, square) * endgameWeight),
-                    PieceType.King => sign * (int)Math.Round(GetPieceSquareValue(6, square) * (1 - endgameWeight) + GetPieceSquareValue(7, square) * endgameWeight),
-                    _ => sign * GetPieceSquareValue((int)piece.PieceType, square),
-                };
+                    phase += gamephase[piece];
+                    int index = BitboardHelper.ClearAndGetIndexOfLSB(ref bitBoard);
+                    // punish bad pawnstructure
+                    if (piece == 1)
+                    {
+                        ulong rankBitBoard = (ulong)0x0101010101010101 << index % 8;
+                        ulong neigbourRanks = (index % 8) switch
+                        {
+                            0 => rankBitBoard << 1,
+                            7 => rankBitBoard >> 1,
+                            _ => (rankBitBoard << 1) + (rankBitBoard >> 1)
+                        };
+                        // against without (depth 4, 50 games)
+                        // without: 20 10 20
+                        // dubbled: 26 6 18             Best
+                        // passed: 21 8 21 
+                        // isolated: 25 7 18
+                        // dubbled + passed: 21 11 18
+                        // dubbled + isolated: 20 8 22
+                        // all: 19 5 26                 Worst
+
+                        // dubbled pawns
+                        if ((bitBoard & (rankBitBoard)) != 0)
+                        {
+                            mg -= 50;
+                            eg -= 50;
+                        }
+
+                        // isolated pawns
+                        //if ((board.GetPieceBitboard(PieceType.Pawn, whitePiece) & neigbourRanks) == 0) mg -= 25;
+
+                        // passed pawns
+                        /* ulong pawnPath = rankBitBoard + neigbourRanks;
+                        if (whitePiece) pawnPath <<= 8 * (index / 8 + 1);
+                        else pawnPath >>= 64 - 8 * (index / 8);
+
+                        if ((board.GetPieceBitboard(PieceType.Pawn, !whitePiece) & pawnPath) == 0) eg += 25;
+                        */
+                    }
+                    int psi = 128 * (piece - 1) + index ^ (whitePiece ? 56 : 0);
+                    mg += GetPieceSquareValue(psi) + pieceEval[piece];
+                    eg += GetPieceSquareValue(psi + 64) + pieceEval[piece];
+                }
+            }
+            mg = -mg;
+            eg = -eg;
+        }
+        return (mg * phase + eg * (24 - phase)) / 24 * (board.IsWhiteToMove ? 1 : -1);
+    }
+
+    int Search(Board board, Timer timer, int alpha, int beta, int depth, int ply)
+    {
+        ulong zobristkey = board.ZobristKey;
+        bool capturesOnly = depth <= 0;
+        bool isRoot = ply == 0;
+        int bestEval = -100_000;
+
+        if (!isRoot && board.IsRepeatedPosition()) return 0;
+
+        TTEntry ttEntry = tt[zobristkey & ttMask];
+
+        if (!isRoot && ttEntry.zobristHash == zobristkey && ttEntry.depth >= depth && (
+            ttEntry.flag == 0 || // Exact
+            ttEntry.flag == 1 && ttEntry.eval >= beta || // Lowerbound
+            ttEntry.flag == 2 && ttEntry.eval <= alpha // Upperbound
+            )) return ttEntry.eval;
+
+        if (capturesOnly)
+        {
+            bestEval = Evaluate(board);
+            if (bestEval >= beta) return bestEval;
+            alpha = Math.Max(alpha, bestEval);
+        }
+        Move[] moves = board.GetLegalMoves(capturesOnly);
+
+        Move bestMove = Move.NullMove;
+        int origAlpha = alpha;
+
+        foreach (Move move in moves.OrderByDescending(move => move.Equals(ttEntry.move) ? 100_000 : 100 * (int)move.CapturePieceType - (int)move.MovePieceType))
+        {
+            if (timer.MillisecondsElapsedThisTurn > searchTime) return 100_000;
+
+            board.MakeMove(move);
+            int eval;
+            if (isRoot && move.Equals(ttEntry.move))
+            {
+                eval = -Search(board, timer, -100_000, 100_000, depth - 1, ply + 1);
+                if (eval >= beta || eval <= alpha)
+                {
+                    board.UndoMove(move);
+                    return eval;
+                }
+            }
+            else
+                eval = -Search(board, timer, -beta, -alpha, depth - 1, ply + 1);
+            board.UndoMove(move);
+            // New best move
+            if (eval > bestEval)
+            {
+                bestEval = eval;
+                bestMove = move;
+                if (ply == 0)
+                {
+                    bestmoveRoot = move;
+                    //Console.WriteLine("move: " + move + "eval: " + eval); //DEBUG
+                }
+
+                // Improve alpha
+                alpha = Math.Max(alpha, eval);
+
+                // Fail-high
+                if (alpha >= beta) break;
+
             }
         }
 
+        if (!capturesOnly && moves.Length == 0) return board.IsInCheck() ? -100_000 + ply : 0;
 
-        return board.IsWhiteToMove ? eval : -eval;
+        int flag = bestEval >= beta ? 1 : bestEval > origAlpha ? 0 : 2;
+
+        tt[zobristkey & ttMask] = new TTEntry(zobristkey, bestMove, depth, bestEval, flag);
+
+        return bestEval;
+
     }
-
-    static int CountMaterial(Board board, bool whiteMaterial, bool includePawns = true)
+    public Move Think(Board board, Timer timer)
     {
-        /* int material = 0;
-        if (includePawns) material += board.GetPieceList(PieceType.Pawn, whiteMaterial).Count * 100;
-        material += board.GetPieceList(PieceType.Knight, whiteMaterial).Count * 300;
-        material += board.GetPieceList(PieceType.Bishop, whiteMaterial).Count * 320;
-        material += board.GetPieceList(PieceType.Rook, whiteMaterial).Count * 500;
-        material += board.GetPieceList(PieceType.Queen, whiteMaterial).Count * 900;
-        return material; */
+        searchTime = timer.MillisecondsRemaining / 30;
+        //searchTime = 10;
+        bestmoveRoot = Move.NullMove;
 
-        int[] materialValues = { 100, 300, 320, 500, 900 };
+        int prevEval = 0, windowSize = 16;
 
-        int material = 0;
-        PieceList[] pieceLists = board.GetAllPieceLists();
-        for (int i = 0; i <= 4; i++)
+        TTEntry ttEntry = tt[board.ZobristKey & ttMask];
+        if (ttEntry.zobristHash == board.ZobristKey) prevEval = ttEntry.eval;
+
+        for (int depth = 1; depth <= 25; depth++)
         {
-            if (i == 0 && !includePawns) continue;
-            material += pieceLists[whiteMaterial ? i : i + 6].Count * materialValues[i];
+            //Console.WriteLine("start depth: " + depth); //DEBUG
+            int searches = 1;
+        redo:
+            int eval = Search(board, timer, prevEval - windowSize, prevEval + windowSize, depth, 0);
+            if ((eval >= prevEval + windowSize || eval <= prevEval - windowSize) && Math.Abs(eval) < 90_000)
+            {
+                prevEval = eval;
+                searches++;
+                windowSize *= 2;
+                goto redo;
+            }
+            Console.WriteLine(searches);
+
+            prevEval = eval;
+            if (timer.MillisecondsElapsedThisTurn > searchTime)
+            {
+                Console.WriteLine($"depth {depth}"); // #DEBUG
+                break;
+            }
         }
-        return material;
+        return bestmoveRoot.IsNull ? board.GetLegalMoves()[0] : bestmoveRoot;
     }
-    static int MopUpEval(Board board, bool friendlyColorWhite, int myMaterial, int opponentMaterial, float endgameWeight)
-    {
-        int mopUpScore = 0;
-        if (myMaterial > opponentMaterial + 100 * 2 && endgameWeight > 0)
-        {
-            Square opponentKingSquare = board.GetKingSquare(!friendlyColorWhite);
-            mopUpScore += ManhattanCenterDistance(opponentKingSquare) * 10;
-            // use ortho dst to promote direct opposition
-            mopUpScore += (14 - ManhattanDistance(board.GetKingSquare(friendlyColorWhite), opponentKingSquare)) * 4;
-
-            return (int)(mopUpScore * endgameWeight);
-        }
-        return 0;
-    }
-    static int ManhattanCenterDistance(Square sq)
-    {
-        int file = sq.File;
-        int rank = sq.Rank;
-        file ^= (file - 4) >> 8;
-        rank ^= (rank - 4) >> 8;
-        return (file + rank) & 7;
-    }
-
-    static int ManhattanDistance(Square sq1, Square sq2)
-    {
-        return Math.Abs(sq2.Rank - sq1.Rank) + Math.Abs(sq2.File - sq1.File);
-    }
-
 }
